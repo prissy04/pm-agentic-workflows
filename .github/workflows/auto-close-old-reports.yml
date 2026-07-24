@@ -1,0 +1,56 @@
+name: Auto Close Old Reports
+
+on:
+  schedule:
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+
+jobs:
+  close-old-reports:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      OLDER_THAN_DAYS: '30'
+    steps:
+      - name: Close stale dependency-report and reminder issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const days = parseInt(process.env.OLDER_THAN_DAYS || '30', 10);
+            const cutoff = new Date();
+            cutoff.setUTCDate(cutoff.getUTCDate() - days);
+
+            const labels = ['dependency-report', 'reminder'];
+
+            for (const label of labels) {
+              const issues = await github.paginate(github.rest.issues.listForRepo, {
+                owner,
+                repo,
+                state: 'open',
+                labels: label,
+                per_page: 100,
+              });
+
+              for (const issue of issues) {
+                const created = new Date(issue.created_at);
+                if (created < cutoff) {
+                  await github.rest.issues.createComment({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    body: `Closing stale \`${label}\` report automatically after ${days} days. If this needs to stay open, please reopen and assign an owner.`,
+                  });
+                  await github.rest.issues.update({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    state: 'closed',
+                  });
+                  core.info(`Closed issue #${issue.number} (${issue.title})`);
+                }
+              }
+            }
